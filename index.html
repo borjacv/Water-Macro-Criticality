@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Water macro-criticality — interactive map</title>
+<style>
+  :root{ --navy:#002244; --blue:#0B6FB8; --ink:#1B2733; --slate:#5A6B7B; --line:#D8E2EC;
+         --t1:#A8322F; --t2:#D2691E; --t3:#E0A93B; --none:#E7ECF1; }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"Segoe UI",Calibri,Arial,sans-serif;color:var(--ink);background:#fff}
+  header{padding:16px 22px 10px;border-bottom:1px solid var(--line)}
+  h1{margin:0;font-size:21px;color:var(--navy);font-weight:700}
+  .sub{margin:3px 0 0;font-size:13px;color:var(--slate)}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:12.5px;color:var(--ink)}
+  .legend span{display:inline-flex;align-items:center;gap:7px}
+  .sw{width:14px;height:14px;border-radius:3px;display:inline-block}
+  .wrap{display:flex;min-height:560px}
+  .mapcol{flex:1;position:relative;min-width:0}
+  svg{display:block;width:100%;height:100%;background:#F4F9FD}
+  .country{stroke:#fff;stroke-width:.4px;cursor:pointer;transition:opacity .15s}
+  .country.inactive{cursor:default}
+  .country:hover{opacity:.78}
+  .country.sel{stroke:#fff;stroke-width:1.1px}
+  .hint{position:absolute;left:14px;bottom:12px;font-size:12px;color:var(--slate);background:rgba(255,255,255,.85);padding:5px 10px;border-radius:6px;border:1px solid var(--line)}
+  .btn{position:absolute;right:14px;top:12px;font-size:12.5px;background:#fff;border:1px solid var(--line);color:var(--navy);padding:6px 12px;border-radius:7px;cursor:pointer}
+  .btn:hover{background:var(--navy);color:#fff;border-color:var(--navy)}
+  .panel{width:340px;flex:0 0 340px;border-left:1px solid var(--line);padding:20px;overflow:auto}
+  .badge{display:inline-block;font-size:11px;font-weight:700;color:#fff;padding:3px 10px;border-radius:11px;letter-spacing:.3px}
+  .pname{font-size:24px;font-weight:700;color:var(--navy);margin:12px 0 4px}
+  .drivers{font-size:12.5px;color:var(--slate);margin:0 0 14px}
+  .desc{font-size:14px;line-height:1.55}
+  .empty{color:var(--slate);font-size:14px;line-height:1.6;margin-top:30px}
+  .ftr{font-size:11px;color:var(--slate);padding:8px 22px 14px;border-top:1px solid var(--line)}
+  @media(max-width:820px){ .wrap{flex-direction:column} .panel{width:auto;flex:auto;border-left:none;border-top:1px solid var(--line)} }
+  .err{padding:30px;color:var(--t1);font-size:14px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Water macro-criticality — where water threatens the macroeconomy</h1>
+  <p class="sub">Click any highlighted country to zoom in and read why water is macro-critical there. Colour = relative criticality.</p>
+  <div class="legend">
+    <span><i class="sw" style="background:var(--t1)"></i>Tier 1 · highest (scarcity + exposed economy + fiscal/external fragility)</span>
+    <span><i class="sw" style="background:var(--t2)"></i>Tier 2 · high</span>
+    <span><i class="sw" style="background:var(--t3)"></i>Tier 3 · notable / watch</span>
+  </div>
+</header>
+<div class="wrap">
+  <div class="mapcol">
+    <button class="btn" id="tour" style="right:108px">&#9654; Auto-tour</button>
+    <button class="btn" id="reset">Reset view</button>
+    <svg id="map"></svg>
+    <div class="hint">Tip: small Gulf states are easier to click after zooming in.</div>
+  </div>
+  <aside class="panel" id="panel">
+    <div class="empty" id="empty">Select a country on the map to see its water macro-criticality profile. Countries shaded in red/orange/gold are flagged; grey countries are not on the priority list.</div>
+    <div id="info" style="display:none">
+      <span class="badge" id="b-tier"></span>
+      <div class="pname" id="b-name"></div>
+      <div class="drivers" id="b-drivers"></div>
+      <div class="desc" id="b-desc"></div>
+    </div>
+  </aside>
+</div>
+<div class="ftr">Sources: WRI Aqueduct 4.0 (2023); IMF Working Paper WP/25/251, “Macro-Criticality of Water Resources” (2025); World Bank, “Funding a Water-Secure Future” (2024). Cartography: Natural Earth via world-atlas. Tiers are a qualitative synthesis, not a single index.</div>
+
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
+<script>
+const TIER_COLOR = {1:"#A8322F",2:"#D2691E",3:"#E0A93B"};
+const DATA = {
+ "Egypt":{t:1,d:"Scarcity + reliance + import dependence",x:"Extremely high stress and ~97% dependence on the Nile. Runs the largest virtual-water deficit in the IMF dataset and is one of four countries with the most GDP exposed to water stress by 2050. Heavy food-import reliance ties water directly to the external accounts."},
+ "Iraq":{t:1,d:"Largest virtual-water importer; declining rivers",x:"The single largest importer of embedded (virtual) water in the IMF table, with falling Tigris–Euphrates flows and conflict-related fragility. Acute reliance on imported water and food."},
+ "Iran":{t:1,d:"Extreme stress + large irrigated economy",x:"Extremely high water stress with a large irrigated agricultural sector. Decades of unsustainable water use are already triggering protests — tensions set to intensify as stress worsens."},
+ "Pakistan":{t:1,d:"Stress + huge irrigation + thin fiscal space",x:"Extremely high stress and one of the largest blue-water agricultural economies, a top virtual-water importer, with limited fiscal/debt headroom to absorb water shocks."},
+ "Jordan":{t:1,d:"Extreme scarcity meets fiscal pressure",x:"An explicit IMF case of severe scarcity colliding with fiscal pressure and sustainability challenges; highly dependent on external and non-conventional supply."},
+ "Yemen":{t:1,d:"Extreme scarcity + conflict/fragility",x:"Extreme physical scarcity compounded by conflict and state fragility, with collapsed service provision and deep underfunding."},
+ "Lebanon":{t:1,d:"Among the most stressed; fiscal crisis",x:"Among the five most water-stressed countries globally, with a financial-sector and fiscal crisis that starves water infrastructure of funding."},
+ "Libya":{t:1,d:"Extreme aridity + fragility",x:"Extreme aridity and fossil-aquifer dependence amid political fragmentation and weak institutional capacity."},
+ "Syria":{t:1,d:"Drought, conflict, institutional collapse",x:"Extreme stress, prolonged drought and conflict-driven institutional collapse have made water both a driver and casualty of crisis."},
+ "India":{t:1,d:"Largest absolute exposure",x:"The largest absolute exposure: the biggest blue- and green-water consumer, thermal-power cooling shortfalls, and a vast water-exposed population and GDP. One of four countries with most GDP exposed by 2050."},
+
+ "Saudi Arabia":{t:2,d:"Extreme scarcity; external/food reliance",x:"Among the most water-stressed on earth and desalination/food-import dependent; criticality runs through the external account, cushioned by strong fiscal buffers."},
+ "United Arab Emirates":{t:2,d:"Extreme scarcity; desalination-dependent",x:"Extreme physical scarcity met almost entirely by energy-intensive desalination and food imports; high external exposure, strong fiscal capacity."},
+ "Kuwait":{t:2,d:"Among the five most stressed",x:"One of the five most water-stressed countries; near-total reliance on desalination and imports, buffered by hydrocarbon revenue."},
+ "Qatar":{t:2,d:"Among the five most stressed",x:"One of the five most water-stressed countries; desalination- and import-dependent with very low renewable supply."},
+ "Bahrain":{t:2,d:"World's most water-stressed",x:"Ranked the single most water-stressed country; minimal renewable supply, fully reliant on desalination and imports."},
+ "Oman":{t:2,d:"Among the five most stressed",x:"Among the five most water-stressed countries; arid with heavy groundwater depletion and desalination reliance."},
+
+ "Niger":{t:2,d:"Severe drought-GDP exposure + underfunding",x:"The IMF cites GDP losses near 12% under a dry scenario. Rain-fed agriculture, fast-growing demand and severe sector underfunding define the criticality."},
+ "Burkina Faso":{t:2,d:"Drought-GDP loss ~7%; Sahel fragility",x:"IMF estimates ~6.8% GDP loss under dry/pessimistic scenarios; Sahelian rain-fed dependence and weak financing."},
+ "Mali":{t:2,d:"Sahel drought + fragility + underfunding",x:"Sahelian rain-fed agriculture, recurrent drought, fragility and acute WASH underfunding."},
+ "Chad":{t:2,d:"Sahel aridity + Lake Chad decline",x:"Severe aridity, shrinking Lake Chad, and very low water-sector spending against fast-rising demand."},
+ "Mauritania":{t:2,d:"Desert margin + scarcity",x:"Desert-margin scarcity with limited renewable supply and heavy reliance on the Senegal River."},
+ "Ethiopia":{t:2,d:"Drought + rapid demand growth",x:"Recurrent multi-season drought and one of the fastest-growing water demands in the world, straining a thinly funded sector."},
+ "Somalia":{t:2,d:"Recurrent drought + fragility",x:"Repeated catastrophic droughts, near-total rain dependence and state fragility produce extreme exposure."},
+ "Kenya":{t:2,d:"Horn-of-Africa drought exposure",x:"Recurrent Horn-of-Africa drought hitting agriculture, hydropower and the fiscal accounts."},
+ "Zambia":{t:2,d:"Drought-driven hydropower & fiscal shock",x:"An explicit IMF case: the 2023/24 drought hit hydropower generation and the budget hard, illustrating direct fiscal transmission."},
+ "Zimbabwe":{t:2,d:"Drought + hydropower dependence",x:"Drought and Kariba hydropower dependence translate dry years into power cuts and fiscal stress."},
+ "Malawi":{t:2,d:"Hydropower + drought + underfunding",x:"Hydropower-reliant grid and rain-fed agriculture exposed to drought, with limited fiscal capacity."},
+
+ "Uzbekistan":{t:2,d:"Aral basin; irrigation-intensive",x:"Cotton/irrigation-intensive economy in the depleted Aral Sea basin; transboundary dependence and projected 7–12% GDP losses (with India/China/Central Asia) without reform."},
+ "Turkmenistan":{t:2,d:"Desert irrigation; transboundary reliance",x:"Among the most water-stressed; desert irrigation almost wholly dependent on the Amu Darya."},
+ "Tajikistan":{t:2,d:"Upstream hydropower; transboundary",x:"Hydropower-dependent upstream economy in a contested transboundary basin; dry years hit power and exports."},
+ "Kyrgyzstan":{t:2,d:"Hydropower + transboundary headwaters",x:"Hydropower-reliant headwaters state; water availability drives both energy and downstream regional tensions."},
+ "Kazakhstan":{t:2,d:"Irrigation + shared rivers",x:"Large irrigated agriculture dependent on transboundary rivers, with rising stress across the Aral and Balkhash basins."},
+
+ "Dominican Rep.":{t:2,d:"Largest modelled drought-GDP loss",x:"The IMF flags a striking ~16.7% GDP loss under a dry, pessimistic scenario — tourism, agriculture and hydropower all water-exposed."},
+ "Chile":{t:2,d:"Extreme stress + mining/agri water use",x:"Extreme stress with mining and agriculture both highly water-intensive; megadrought has pushed adoption of seawater/desalination."},
+ "Mexico":{t:2,d:"Top-4 GDP exposed; northern day-zero risk",x:"Among the four economies with the most GDP exposed by 2050, with recurrent northern 'day-zero' episodes."},
+ "Spain":{t:2,d:"High stress + large virtual-water importer",x:"High Mediterranean stress and a large importer of embedded water; agriculture and tourism exposed to recurring drought."},
+ "Morocco":{t:2,d:"Chronic drought + agri dependence",x:"Chronic multi-year drought, dam dependence and a water-intensive agricultural export sector."},
+ "Tunisia":{t:2,d:"Mediterranean scarcity + fiscal stress",x:"Extremely high stress with limited supply and constrained public finances for the sector."},
+ "Turkey":{t:2,d:"Top-4 GDP exposed by 2050",x:"One of the four economies with the most GDP exposed to water stress by 2050; large irrigated agriculture and upstream transboundary role."},
+
+ "Botswana":{t:3,d:"Arid; sharp projected stress rise",x:"Arid economy projected to face a sharp increase in water stress; reliant on shared and groundwater sources."},
+ "Namibia":{t:3,d:"Driest in sub-Saharan Africa",x:"Among the driest countries in sub-Saharan Africa with very limited renewable supply and rising demand."},
+ "South Africa":{t:3,d:"Day-zero risk; high stress",x:"High stress and 'day-zero' episodes (Cape Town); agriculture, mining and power all water-exposed."},
+ "Ecuador":{t:3,d:"Drought-driven electricity crisis (IMF case)",x:"The IMF's case study of a 2024 drought-driven electricity crisis — hydropower shortfalls forcing rationing and imports."},
+ "Brazil":{t:3,d:"Hydropower + Amazon-basin drought",x:"Heavy hydropower reliance plus record Amazon-basin drought; dry years raise power costs and hit agriculture."},
+ "Albania":{t:3,d:"Among Europe's most hydropower-reliant grids",x:"One of the most hydropower-dependent power systems in Europe; dry years force electricity imports and fiscal strain."},
+ "Peru":{t:3,d:"Andean variability + social conflict",x:"Andean water variability and mining-related social conflicts over water make the sector economically and politically sensitive."},
+ "Honduras":{t:3,d:"Central American Dry Corridor",x:"Chronic Dry-Corridor drought hitting smallholder agriculture and food security."},
+ "Guatemala":{t:3,d:"Central American Dry Corridor",x:"Dry-Corridor drought and rain-fed dependence threaten food security and rural livelihoods."},
+ "El Salvador":{t:3,d:"Dry Corridor + degraded supply",x:"Dry-Corridor stress compounded by degraded and contaminated water sources."},
+ "Greece":{t:3,d:"Mediterranean stress + tourism exposure",x:"Rising Mediterranean stress with tourism and agriculture exposed to drought and seasonal shortages."},
+ "Cyprus":{t:3,d:"Among the five most stressed",x:"Among the five most water-stressed countries; desalination-dependent island with scarce renewable supply."}
+};
+const ALIAS = {"Dominican Republic":"Dominican Rep.","United States":"United States of America"};
+
+const svg = d3.select("#map");
+let width=960, height=560;
+function size(){ const n=document.querySelector(".mapcol"); width=n.clientWidth||960; height=Math.max(440, Math.min(620, Math.round(width*0.62))); svg.attr("viewBox",`0 0 ${width} ${height}`);}
+size();
+const g = svg.append("g");
+const projection = d3.geoNaturalEarth1();
+const path = d3.geoPath(projection);
+let selected=null, featureByKey={};
+
+function lookup(name){ if(DATA[name]) return name; if(ALIAS[name]&&DATA[ALIAS[name]]) return ALIAS[name]; return null; }
+
+d3.json("https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json").then(world=>{
+  const countries = topojson.feature(world, world.objects.countries).features;
+  projection.fitSize([width,height], {type:"FeatureCollection",features:countries});
+  g.selectAll("path").data(countries).join("path")
+    .attr("d", path)
+    .attr("class", d=> lookup(d.properties.name)?"country":"country inactive")
+    .attr("fill", d=>{ const k=lookup(d.properties.name); return k?TIER_COLOR[DATA[k].t]:"#E7ECF1"; })
+    .on("click",(e,d)=>{ const k=lookup(d.properties.name); if(k){ stopTour(); select(d,k); } })
+    .append("title").text(d=>{ const k=lookup(d.properties.name); return k? d.properties.name+" — Tier "+DATA[k].t : d.properties.name; });
+  countries.forEach(f=>{ const k=lookup(f.properties.name); if(k && !featureByKey[k]) featureByKey[k]=f; });
+}).catch(()=>{ document.querySelector(".mapcol").innerHTML='<div class="err">Could not load the world map data. Please open this file with an internet connection (it loads Natural Earth boundaries from a CDN).</div>'; });
+
+function select(feature,key){
+  selected=feature;
+  g.selectAll("path").classed("sel",d=>d===feature);
+  const info=DATA[key];
+  document.getElementById("empty").style.display="none";
+  document.getElementById("info").style.display="block";
+  const b=document.getElementById("b-tier");
+  b.textContent="Tier "+info.t+(info.t===1?" · highest":info.t===2?" · high":" · watch");
+  b.style.background=TIER_COLOR[info.t];
+  document.getElementById("b-name").textContent=feature.properties.name;
+  document.getElementById("b-drivers").textContent=info.d;
+  document.getElementById("b-desc").textContent=info.x;
+  zoomTo(feature);
+}
+function zoomTo(feature){
+  const b=path.bounds(feature), dx=b[1][0]-b[0][0], dy=b[1][1]-b[0][1];
+  const x=(b[0][0]+b[1][0])/2, y=(b[0][1]+b[1][1])/2;
+  const scale=Math.max(1.4, Math.min(9, 0.7/Math.max(dx/width,dy/height)));
+  const tx=width/2 - scale*x, ty=height/2 - scale*y;
+  g.transition().duration(900).attr("transform",`translate(${tx},${ty}) scale(${scale})`).attr("stroke-width",1/scale);
+}
+function reset(){ selected=null; g.selectAll("path").classed("sel",false);
+  g.transition().duration(700).attr("transform","translate(0,0) scale(1)");
+  document.getElementById("info").style.display="none";
+  document.getElementById("empty").style.display="block"; }
+document.getElementById("reset").onclick=()=>{ stopTour(); reset(); };
+
+const TOUR=["Egypt","Iraq","Iran","Pakistan","India","Jordan","Saudi Arabia","Niger","Ethiopia","Zambia","Uzbekistan","Dominican Rep.","Chile","Mexico","Spain","Ecuador"];
+let tourTimer=null, tourIx=0;
+function step(){ const k=TOUR[tourIx % TOUR.length]; const f=featureByKey[k]; if(f) select(f,k); tourIx++; }
+function startTour(){ if(!Object.keys(featureByKey).length) return; tourIx=0; step(); tourTimer=setInterval(step, 3000);
+  document.getElementById("tour").innerHTML="&#9632; Stop tour"; }
+function stopTour(){ if(tourTimer){ clearInterval(tourTimer); tourTimer=null; document.getElementById("tour").innerHTML="&#9654; Auto-tour"; } }
+document.getElementById("tour").onclick=()=>{ tourTimer? stopTour() : startTour(); };
+
+window.addEventListener("resize",()=>{ svg.attr("viewBox",`0 0 ${width} ${height}`); });
+</script>
+</body>
+</html>
